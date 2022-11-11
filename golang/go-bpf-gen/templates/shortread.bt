@@ -1,0 +1,34 @@
+BEGIN {
+  printf("Hit CTRL+C to end profiling\n");
+}
+
+uprobe:{{ .ExePath }}:runtime.execute {
+  // map thread id to goroutine id
+  @gids[tid] = {{ .Arg 0 }}
+}
+
+tracepoint:sched:sched_process_exit {
+  delete(@gids[tid]);
+}
+
+
+uprobe:{{ $.ExePath }}:"os.(*File).Read" {
+	$gid = @gids[tid];
+  // argument 0 is the receiver, 1, 2 and 3 make up the
+  // slice (ptr, len, cap).
+  @len[$gid, pid] = {{ .Arg 2 }};
+}
+
+{{ range $index, $r := $.SymbolReturns "os.(*File).Read" -}}
+{{ if $index }}, {{ end }}
+uprobe:{{ $.ExePath }}:"os.(*File).Read" + {{ $r -}}
+{{ end }} {
+	$gid = @gids[tid];
+  $len = reg("ax");
+  if ($len < @len[$gid, pid]) {
+    @shortreads[ustack()] = count();
+  }
+  delete(@len[$gid, pid]);
+}
+
+

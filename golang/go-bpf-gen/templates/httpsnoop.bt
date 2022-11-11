@@ -1,0 +1,72 @@
+struct url {
+  uint8_t *scheme;
+  int schemelen;
+  uint8_t *opaque;
+  int opaquelen;
+  uint64_t pad;
+  uint8_t *host;
+  int hostlen;
+  uint8_t *path;
+  int pathlen;
+};
+
+struct request {
+  uint8_t pad[16];
+  struct url *url;
+};
+
+struct response {
+  uint8_t *statusstr;
+  uint8_t *statusstrlen;
+  int statuscode;
+};
+
+
+uprobe:{{ .ExePath }}:runtime.execute {
+	// map thread id to goroutine id
+	@gids[tid] = {{ .Arg 0 }}
+}
+
+tracepoint:sched:sched_process_exit {
+  delete(@rscheme[@gids[tid], pid]);
+  delete(@rhost[@gids[tid], pid]);
+  delete(@rpath[@gids[tid], pid]);
+{{ if not .RegsABI }}
+  delete(@addr[@gids[tid], pid]);
+{{ end }}
+  delete(@gids[tid]);
+}
+
+
+uprobe:{{ .ExePath }}:"net/http.(*Client).do" {
+  $url = ((struct request *){{ .Arg 1 }})->url;
+  $scheme = str($url->scheme, $url->schemelen);
+  $host = str($url->host, $url->hostlen);
+  $path = str($url->path, $url->pathlen);
+
+  @rscheme[@gids[tid], pid] = $scheme;
+  @rhost[@gids[tid], pid] = $host;
+  @rpath[@gids[tid], pid] = $path;
+}
+
+{{ range $index, $r := $.SymbolReturns "net/http.(*Client).do" -}}
+{{ if $index }}, {{ end }}
+uprobe:{{ $.ExePath }}:"net/http.(*Client).do" + {{ $r -}}
+{{ end }} {
+  {{ if $.RegsABI }}
+  $resp = (struct response *)reg("ax");
+  {{ else }}
+  @addr[@gids[tid], pid] = *(reg("sp") + 24);
+  $resp = (struct response *)@addr[@gids[tid], pid];
+  {{ end }}
+  if ($resp == 0) {
+    printf("error %s://%s%s\n", @rscheme[@gids[tid], pid], @rhost[@gids[tid], pid], @rpath[@gids[tid], pid]);
+  } else {
+    printf("%d: %s://%s%s\n", $resp->statuscode, @rscheme[@gids[tid], pid], @rhost[@gids[tid], pid], @rpath[@gids[tid], pid]);
+  }
+  print(ustack());
+}
+
+
+
+

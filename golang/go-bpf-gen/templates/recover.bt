@@ -1,0 +1,12 @@
+{{ range $index, $r := $.SymbolReturns "runtime.gorecover" -}}
+{{ if $index }}, {{ end }}
+uprobe:{{ $.ExePath }}:"runtime.gorecover" + {{ $r -}}
+{{ end }} {
+  {{ if $.RegsABI }}
+  if (reg("ax") != 0) {
+  {{ else }}
+  if (*(reg("sp") + 24) != 0) {
+  {{ end }}
+    @recover[ustack()] = count();
+  }
+}

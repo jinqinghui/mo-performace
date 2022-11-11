@@ -1,0 +1,14 @@
+uprobe:{{ .ExePath }}:runtime.execute {
+	// map thread id to address of runtime.g
+	@gids[tid] = {{ .Arg 0 }}
+}
+
+
+uprobe:{{ .ExePath }}:"runtime.newproc" {
+  $gid = @gids[tid];
+  printf("%d spawning goroutine: %s\n", $gid, ustack());
+}
+
+tracepoint:sched:sched_process_exit {
+  delete(@gids[tid]);
+}

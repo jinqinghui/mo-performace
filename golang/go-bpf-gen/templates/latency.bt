@@ -1,0 +1,32 @@
+BEGIN {
+  printf("Hit CTRL+C to end profiling\n");
+}
+
+
+uprobe:{{ .ExePath }}:runtime.execute {
+	// map thread id to goroutine id
+	@gids[tid] = {{ .Arg 0 }}
+}
+
+tracepoint:sched:sched_process_exit {
+  delete(@gids[tid]);
+}
+
+
+{{ range $symbolidx, $symbol := (call .Arguments "symbol") }}
+
+uprobe:{{ $.ExePath }}:"{{ $symbol }}" {
+	$gid = @gids[tid];
+	@start{{ $symbolidx }}[$gid, pid] = nsecs;
+}
+
+{{ range $index, $r := $.SymbolReturns $symbol -}}
+{{ if $index }}, {{ end }}
+uprobe:{{ $.ExePath }}:"{{ $symbol }}" + {{ $r -}}
+{{ end }} {
+	$gid = @gids[tid];
+	@durations["{{ $symbol }}"] = hist((nsecs - @start{{ $symbolidx }}[$gid, pid])/1000000);
+	delete(@start{{ $symbolidx }}[$gid, pid]);
+}
+
+{{ end }}
